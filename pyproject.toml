@@ -31,3 +31,7 @@ Issues = "https://github.com/shipmindlabs/euinvoice/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/euinvoice"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
