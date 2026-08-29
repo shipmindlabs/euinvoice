@@ -5,29 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from enum import Enum
 from typing import Sequence
 
 from .money import CurrencyMismatch, Money, to_decimal
 from .parties import Party
+from .vat import VatCategory, VatDecision, VatRegime, decide_vat_regime
 
 __all__ = ["Invoice", "InvoiceLine", "VatBreakdownRow", "VatCategory"]
 
 _HUNDRED = Decimal(100)
-
-
-class VatCategory(Enum):
-    """How a line is treated for VAT purposes."""
-
-    STANDARD = "standard"
-    REDUCED = "reduced"
-    ZERO_RATED = "zero-rated"
-    EXEMPT = "exempt"
-    REVERSE_CHARGE = "reverse-charge"
-
-    @property
-    def is_taxable(self) -> bool:
-        return self in (VatCategory.STANDARD, VatCategory.REDUCED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +192,15 @@ class Invoice:
             VatBreakdownRow(category=category, rate=rate, net=net, vat=vat)
             for (category, rate), (net, vat) in buckets.items()
         )
+
+    @property
+    def vat_decision(self) -> VatDecision:
+        """The regime the parties fall under, with the facts behind it."""
+        return decide_vat_regime(self.seller, self.buyer)
+
+    @property
+    def vat_regime(self) -> VatRegime:
+        return self.vat_decision.regime
 
     @property
     def is_reverse_charge(self) -> bool:

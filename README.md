@@ -62,6 +62,33 @@ A line with `VatCategory.REVERSE_CHARGE` shifts the tax to the buyer: such
 lines carry a zero rate, require the buyer's VAT identifier, and cannot be
 mixed with taxable lines on the same invoice.
 
+## VAT regimes
+
+The regime follows from the seller country, the buyer country and whether the
+buyer's VAT identifier has been validated (`Party(vat_id_validated=True)`):
+
+| Seller | Buyer | Buyer VAT id | Regime |
+| --- | --- | --- | --- |
+| DE | DE | anything | `DOMESTIC` |
+| DE | FR | validated | `REVERSE_CHARGE` |
+| DE | FR | missing or unvalidated | `PRIVATE_BUYER` |
+| DE | US | anything | `EXPORT` |
+
+```python
+from euinvoice import decide_vat_regime
+
+decision = decide_vat_regime(seller, buyer)
+
+print(decision.regime)        # VatRegime.DOMESTIC
+print(decision.vat_category)  # VatCategory.STANDARD
+print(decision.invoice_note)  # text for the invoice footer, or None
+print(decision.explain())     # facts and legal basis, line by line
+```
+
+A decision carries the facts it was made from and the article it rests on, so
+an invoice can still be defended in an audit years after it was issued.
+`invoice.vat_decision` runs the same rules on the invoice's own parties.
+
 ## Development
 
 ```bash

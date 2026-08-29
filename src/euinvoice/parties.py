@@ -97,6 +97,7 @@ class Party:
     vat_id: str | None = None
     registration_number: str | None = None
     email: str | None = None
+    vat_id_validated: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", _required_text(self.name, "name"))
@@ -108,7 +109,12 @@ class Party:
             _optional_text(self.registration_number, "registration_number"),
         )
         object.__setattr__(self, "email", _optional_text(self.email, "email"))
-        if self.vat_id is not None:
+        if not isinstance(self.vat_id_validated, bool):
+            raise TypeError("vat_id_validated must be a bool")
+        if self.vat_id is None:
+            if self.vat_id_validated:
+                raise ValueError("vat_id_validated needs a vat_id to validate")
+        else:
             raw = _required_text(self.vat_id, "vat_id")
             vat_id = "".join(ch for ch in raw if ch.isalnum()).upper()
             if len(vat_id) < 4:
