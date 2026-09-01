@@ -89,6 +89,60 @@ A decision carries the facts it was made from and the article it rests on, so
 an invoice can still be defended in an audit years after it was issued.
 `invoice.vat_decision` runs the same rules on the invoice's own parties.
 
+## Sequential numbering
+
+Numbers are drawn per series and per period: the counter restarts at one when
+the period rolls over and never restarts inside one.
+
+```python
+from datetime import date
+
+from euinvoice import (
+    InMemoryCounterStore,
+    NumberSeries,
+    Period,
+    SequentialNumbering,
+)
+
+numbering = SequentialNumbering(
+    NumberSeries("INV", Period.YEARLY), InMemoryCounterStore()
+)
+
+issued = numbering.next_number(date(2026, 3, 1))
+
+print(issued.number)   # INV-2026-0001
+print(issued.counter)  # 1
+print(issued.key)      # CounterKey(series='INV', period='2026')
+```
+
+The counter store is a port, so the caller owns the transaction: keep one row
+per `CounterKey` and update it in the same transaction that writes the
+invoice, and a rolled back invoice gives its number back instead of leaving a
+gap. `InMemoryCounterStore` is there for tests and single-process use.
+
+```python
+class PostgresCounterStore:
+    def __init__(self, connection):
+        self._connection = connection
+
+    def next_count(self, key):
+        with self._connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO invoice_counters (series, period, count) "
+                "VALUES (%s, %s, 1) "
+                "ON CONFLICT (series, period) DO UPDATE "
+                "SET count = invoice_counters.count + 1 "
+                "RETURNING count",
+                (key.series, key.period),
+            )
+            return cursor.fetchone()[0]
+```
+
+A store returns the stored count plus one, starting at one, and never hands
+the same value out twice. `SequentialNumbering` checks every value against the
+one before it and raises `NumberingError` on a skip or a repeat, so a broken
+adapter fails at the first bad number rather than at the next audit.
+
 ## Development
 
 ```bash
