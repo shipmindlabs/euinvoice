@@ -143,6 +143,43 @@ the same value out twice. `SequentialNumbering` checks every value against the
 one before it and raises `NumberingError` on a skip or a repeat, so a broken
 adapter fails at the first bad number rather than at the next audit.
 
+## Rendering
+
+`InvoiceDocument` is the print view of an invoice: parties as address blocks,
+lines with their totals worked out, the VAT breakdown and the note the regime
+asks for. `render_html` turns it into one standalone page.
+
+```python
+from euinvoice import InvoiceDocument, render_html, render_pdf
+
+document = InvoiceDocument.from_invoice(invoice)
+html = render_html(document)
+```
+
+The markup is plain and all styling sits in one sheet, so a different look is
+`render_html(document, stylesheet=my_css)` rather than a fork of the template;
+`DEFAULT_STYLESHEET` is a starting point to copy from.
+
+Turning that HTML into PDF is a plugin: the package ships no engine, so
+installing it never drags a browser into your image. A renderer is anything
+with `render(html) -> bytes`.
+
+```python
+class WeasyPrintRenderer:
+    def render(self, html: str) -> bytes:
+        from weasyprint import HTML
+
+        return HTML(string=html).write_pdf()
+
+
+pdf = render_pdf(invoice, WeasyPrintRenderer())
+```
+
+`render_pdf` accepts an `Invoice` or a prepared `InvoiceDocument` and checks
+the PDF header on the way out, so a renderer that hands back an error page or
+a file path raises `RenderingError` here instead of at the point where someone
+opens the file.
+
 ## Development
 
 ```bash
