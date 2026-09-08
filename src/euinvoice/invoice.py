@@ -7,6 +7,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Sequence
 
+from .compliance import MissingRequiredField, check_required_fields
 from .money import CurrencyMismatch, Money, to_decimal
 from .parties import Party
 from .vat import VatCategory, VatDecision, VatRegime, decide_vat_regime
@@ -146,15 +147,14 @@ class Invoice:
             object.__setattr__(self, "notes", self.notes.strip() or None)
 
         categories = {line.vat_category for line in lines}
-        if VatCategory.REVERSE_CHARGE in categories:
-            if any(category.is_taxable for category in categories):
-                raise ValueError(
-                    "reverse-charge lines cannot be mixed with taxable lines"
-                )
-            if self.buyer.vat_id is None:
-                raise ValueError(
-                    "a reverse-charge invoice requires the buyer's VAT identifier"
-                )
+        if VatCategory.REVERSE_CHARGE in categories and any(
+            category.is_taxable for category in categories
+        ):
+            raise ValueError("reverse-charge lines cannot be mixed with taxable lines")
+
+        missing = check_required_fields(self.seller, self.buyer, lines, self.notes)
+        if missing:
+            raise MissingRequiredField(missing)
 
     @property
     def currency(self) -> str:

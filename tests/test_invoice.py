@@ -193,7 +193,8 @@ class TestInvoice:
 
     def test_reverse_charge_invoice_carries_no_vat(self):
         invoice = make_invoice(
-            [make_line("100.00", rate="0", category=VatCategory.REVERSE_CHARGE)]
+            [make_line("100.00", rate="0", category=VatCategory.REVERSE_CHARGE)],
+            notes="Reverse charge - the recipient accounts for the VAT.",
         )
         assert invoice.is_reverse_charge
         assert invoice.total_vat == Money.zero("EUR")
