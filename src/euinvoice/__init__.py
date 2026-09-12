@@ -1,6 +1,12 @@
 """Invoice PDFs for EU sellers with VAT handling and sequential numbering."""
 
-from .compliance import MissingRequiredField, RequiredField, check_required_fields
+from .compliance import (
+    REVERSE_CHARGE_WORDINGS,
+    MissingRequiredField,
+    RequiredField,
+    check_required_fields,
+    states_reverse_charge,
+)
 from .invoice import Invoice, InvoiceLine, VatBreakdownRow
 from .money import CurrencyMismatch, Money
 from .numbering import (
@@ -55,6 +61,7 @@ __all__ = [
     "Party",
     "PdfRenderer",
     "Period",
+    "REVERSE_CHARGE_WORDINGS",
     "RenderingError",
     "RequiredField",
     "SequentialNumbering",
@@ -67,4 +74,5 @@ __all__ = [
     "decide_vat_regime",
     "render_html",
     "render_pdf",
+    "states_reverse_charge",
 ]

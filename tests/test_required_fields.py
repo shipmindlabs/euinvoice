@@ -14,9 +14,11 @@ from euinvoice import (
     Party,
     VatCategory,
     check_required_fields,
+    states_reverse_charge,
 )
 
 DOMESTIC_NOTE = "Reverse charge - the recipient accounts for the VAT."
+EXEMPTION_NOTE = "Exempt under Directive 2006/112/EC, Art. 132(1)(c)."
 
 
 def party(country: str, vat_id: str | None = None, validated: bool = False) -> Party:
@@ -42,6 +44,14 @@ def line(rate: str = "19", category: VatCategory = VatCategory.STANDARD) -> Invo
 
 def shifted_line() -> InvoiceLine:
     return line(rate="0", category=VatCategory.REVERSE_CHARGE)
+
+
+def exempt_line() -> InvoiceLine:
+    return line(rate="0", category=VatCategory.EXEMPT)
+
+
+def zero_rated_line() -> InvoiceLine:
+    return line(rate="0", category=VatCategory.ZERO_RATED)
 
 
 def invoice(seller: Party, buyer: Party, lines, **kwargs) -> Invoice:
@@ -76,7 +86,10 @@ class TestSellerIdentifier:
 
     def test_exempt_lines_do_not_need_the_seller_identifier(self):
         missing = check_required_fields(
-            party("DE"), party("DE"), [line(rate="0", category=VatCategory.EXEMPT)]
+            party("DE"),
+            party("DE"),
+            [exempt_line()],
+            EXEMPTION_NOTE,
         )
         assert missing == ()
 
@@ -148,6 +161,84 @@ class TestReverseCharge:
         )
         assert issued.is_reverse_charge
         assert issued.total_vat == Money.zero("EUR")
+
+
+class TestReverseChargeNote:
+    def test_a_note_about_something_else_does_not_count(self):
+        missing = check_required_fields(
+            party("DE", "DE123456789"),
+            party("DE", "DE987654321"),
+            [shifted_line()],
+            "Payment within 14 days.",
+        )
+        assert names(missing) == ["notes"]
+        assert missing[0].legal_reference.endswith("Art. 226(11a)")
+
+    def test_another_official_language_counts(self):
+        missing = check_required_fields(
+            party("DE", "DE123456789"),
+            party("DE", "DE987654321"),
+            [shifted_line()],
+            "Steuerschuldnerschaft des Leistungsempfängers.",
+        )
+        assert missing == ()
+
+    def test_accents_case_and_hyphens_are_ignored(self):
+        assert states_reverse_charge("Inversion del sujeto pasivo")
+        assert states_reverse_charge("Reverse-Charge supply")
+
+    def test_a_missing_note_states_nothing(self):
+        assert not states_reverse_charge(None)
+        assert not states_reverse_charge("   ")
+
+    def test_the_invoice_refuses_a_note_that_does_not_say_it(self):
+        with pytest.raises(MissingRequiredField):
+            invoice(
+                party("DE", "DE123456789"),
+                party("DE", "DE987654321"),
+                [shifted_line()],
+                notes="Payment within 14 days.",
+            )
+
+    def test_a_seller_outside_the_eu_derives_no_note(self):
+        missing = check_required_fields(
+            party("US", "US123456789"),
+            party("US", "US987654321"),
+            [shifted_line()],
+        )
+        assert names(missing) == ["notes"]
+
+
+class TestUntaxedLines:
+    def test_an_exempt_line_needs_its_reason(self):
+        missing = check_required_fields(
+            party("DE", "DE123456789"), party("DE", "DE987654321"), [exempt_line()]
+        )
+        assert names(missing) == ["notes"]
+        assert missing[0].legal_reference.endswith("Art. 226(11)")
+
+    def test_a_written_reason_is_enough(self):
+        missing = check_required_fields(
+            party("DE", "DE123456789"),
+            party("DE", "DE987654321"),
+            [exempt_line()],
+            EXEMPTION_NOTE,
+        )
+        assert missing == ()
+
+    def test_an_export_states_its_own_reason(self):
+        missing = check_required_fields(
+            party("DE", "DE123456789"), party("US"), [zero_rated_line()]
+        )
+        assert missing == ()
+
+    def test_the_invoice_refuses_an_unexplained_exemption(self):
+        with pytest.raises(MissingRequiredField):
+            invoice(
+                party("DE", "DE123456789"),
+                party("DE", "DE987654321"),
+                [exempt_line()],
+            )
 
 
 class TestReporting:

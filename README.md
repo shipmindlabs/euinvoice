@@ -89,6 +89,42 @@ A decision carries the facts it was made from and the article it rests on, so
 an invoice can still be defended in an audit years after it was issued.
 `invoice.vat_decision` runs the same rules on the invoice's own parties.
 
+## Required fields
+
+A treatment asks for more than the amounts it is printed on. Shifting the tax
+needs the buyer's VAT identifier, verified when it comes from another member
+state, and a note saying that the recipient accounts for the VAT; an exempt or
+zero-rated line needs the reason it bears none. `Invoice` runs the check on
+itself and refuses to be built with anything missing, so a gap shows up at
+issuing time rather than at the auditor's desk.
+
+```python
+from euinvoice import MissingRequiredField, check_required_fields
+
+for field in check_required_fields(seller, buyer, lines, notes):
+    print(field)
+# notes: the invoice must state that the recipient accounts for the VAT; ...
+#        (Directive 2006/112/EC, Art. 226(11a))
+```
+
+Run it on a draft and it lists everything that is still missing at once, each
+with the rule that asks for it; `MissingRequiredField` carries the same list in
+`error.missing`.
+
+The note is only required where the parties do not already imply it: a
+cross-border supply to a validated buyer prints the statutory note by itself,
+while a domestic reverse charge has to write it out. A note counts when it
+states the shift in one of the wordings in `REVERSE_CHARGE_WORDINGS`, the
+official languages of the Union, compared with accents, case and hyphens
+ignored. A payment term sitting in `notes` therefore does not pass for it.
+
+```python
+from euinvoice import states_reverse_charge
+
+states_reverse_charge("Steuerschuldnerschaft des Leistungsempfängers")  # True
+states_reverse_charge("Payment within 14 days")                         # False
+```
+
 ## Sequential numbering
 
 Numbers are drawn per series and per period: the counter restarts at one when
