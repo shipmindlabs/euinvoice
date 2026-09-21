@@ -62,6 +62,77 @@ A line with `VatCategory.REVERSE_CHARGE` shifts the tax to the buyer: such
 lines carry a zero rate, require the buyer's VAT identifier, and cannot be
 mixed with taxable lines on the same invoice.
 
+## Issuing invoices in the EU without surprises
+
+An invoice goes wrong in two directions: it can state something the rules do
+not allow, or it can state something the seller never checked. The package
+draws that line in one place. What follows from the data is derived and cannot
+be overridden; what needs a fact from outside is asked for by name and refused
+until it arrives.
+
+### What it decides for you
+
+- **The regime.** Seller country, buyer country and whether the buyer's
+  identifier was validated give one of `DOMESTIC`, `PRIVATE_BUYER`,
+  `REVERSE_CHARGE` or `EXPORT`, together with the facts behind it and the
+  article it rests on.
+- **Every total.** Line net, line VAT, the breakdown per rate bucket and the
+  three invoice totals are properties, never fields. There is no way to write
+  a total that disagrees with its lines, because there is nothing to write to.
+- **Where the rounding falls.** VAT is taken per line, half up, at the minor
+  unit of the currency: two places for EUR, none for JPY, three for TND. Ten
+  lines of 0.10 EUR at 19% carry 0.20 EUR of VAT, not the 0.19 EUR that the
+  same rate on the total would give, and the breakdown adds up either way.
+- **Which fields the treatment requires.** Shifting the tax needs the buyer's
+  identifier and a note in words; an exempt line needs a reason. `Invoice`
+  runs that check on itself and refuses to exist with a gap in it.
+- **When the statutory note is already implied.** A cross-border supply to a
+  validated buyer and an export print their note by themselves; a domestic
+  reverse charge has to write it out, and a payment term does not pass for it.
+- **The next number in a series.** One counter per series and period, restarted
+  when the period rolls over, checked against the number before it so that a
+  store which skips or repeats is reported rather than believed.
+
+### What it refuses to guess
+
+- **The VAT rate.** Rates differ by member state and by what is being sold,
+  and they change. The package takes the rate you pass and only checks it
+  against the category: a taxable line needs a positive rate, an untaxed one
+  needs zero. There is no rate table here, and a stale rate table is worse
+  than none.
+- **Whether an identifier is real.** `vat_id_validated` records a check you
+  made against VIES or whatever your process is; nothing in this package
+  touches the network. An identifier nobody verified leaves the tax with the
+  seller, which is the safe direction to be wrong in.
+- **Where the place of supply moved to.** Distance selling and the One Stop
+  Shop can put the supply in the buyer's country. That follows from how you
+  are registered and what you sell, so the decision notes it as a fact and
+  stops.
+- **Why a line is exempt.** It insists on a reason and prints what you wrote;
+  the provision depends on the supply, and choosing one for you would be
+  guessing at the part an auditor actually reads.
+- **Currencies.** `Money` is bound to one currency and two currencies never
+  combine. There are no exchange rates and no conversion.
+- **How the page is printed.** The HTML is plain and the styling is one sheet
+  you can replace; no PDF engine ships with the package, so the caller brings
+  the renderer. What comes out is a human-readable document, not a structured
+  e-invoice in UBL, Factur-X or XRechnung.
+
+### Not tax advice
+
+What is encoded here are the ordinary cases of the VAT Directive: a supply
+between two parties, taxed where the Directive puts it, documented the way
+Art. 226 asks for. Member states derogate, and the special schemes — margin
+schemes, triangulation, construction services, distance-selling thresholds,
+local registration duties — are not modelled at all. The legal references a
+decision carries are there so an invoice can be defended, not so it can be
+issued unread.
+
+This is a library, and the output is a document rather than an opinion. Have
+the treatment confirmed by someone accountable for it before you issue at
+scale, and read the warranty clause in the licence for what is promised here:
+nothing.
+
 ## VAT regimes
 
 The regime follows from the seller country, the buyer country and whether the
