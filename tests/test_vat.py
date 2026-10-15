@@ -12,10 +12,13 @@ from euinvoice import (
     InvoiceLine,
     Money,
     Party,
+    RegimeMismatch,
     VatCategory,
     VatRegime,
     decide_vat_regime,
 )
+
+EXEMPTION_NOTE = "Exempt under Directive 2006/112/EC, Art. 132(1)(c)."
 
 
 def party(
@@ -28,6 +31,31 @@ def party(
         ),
         vat_id=vat_id,
         vat_id_validated=validated,
+    )
+
+
+def line(
+    rate: str = "19",
+    category: VatCategory = VatCategory.STANDARD,
+    unit_price: str = "100.00",
+) -> InvoiceLine:
+    return InvoiceLine(
+        description="Consulting",
+        quantity=Decimal(1),
+        unit_price=Money(unit_price, "EUR"),
+        vat_rate=Decimal(rate),
+        vat_category=category,
+    )
+
+
+def issue(buyer: Party, lines, **kwargs) -> Invoice:
+    return Invoice(
+        number="2026-0001",
+        issue_date=date(2026, 3, 1),
+        seller=party("DE", "DE123456789"),
+        buyer=buyer,
+        lines=lines,
+        **kwargs,
     )
 
 
@@ -132,22 +160,64 @@ class TestExplanation:
             decision.regime = VatRegime.EXPORT
 
 
+class TestLinesAgainstTheRegime:
+    def test_a_taxable_line_under_reverse_charge_is_refused(self):
+        with pytest.raises(RegimeMismatch) as error:
+            issue(party("FR", "FR12345678901", validated=True), [line()])
+        assert error.value.decision.regime is VatRegime.REVERSE_CHARGE
+        assert error.value.categories == (VatCategory.STANDARD,)
+
+    def test_the_refusal_carries_the_explanation(self):
+        with pytest.raises(RegimeMismatch) as error:
+            issue(party("FR", "FR12345678901", validated=True), [line()])
+        message = str(error.value)
+        assert error.value.decision.explain() in message
+        assert "Art. 196" in message
+
+    def test_a_taxable_line_under_an_export_is_refused(self):
+        with pytest.raises(RegimeMismatch) as error:
+            issue(party("US"), [line(rate="7", category=VatCategory.REDUCED)])
+        assert error.value.decision.regime is VatRegime.EXPORT
+        assert error.value.categories == (VatCategory.REDUCED,)
+
+    def test_every_taxable_category_is_named_once(self):
+        with pytest.raises(RegimeMismatch) as error:
+            issue(
+                party("US"),
+                [line(), line(rate="7", category=VatCategory.REDUCED), line()],
+            )
+        assert error.value.categories == (VatCategory.STANDARD, VatCategory.REDUCED)
+        assert "standard, reduced" in str(error.value)
+
+    def test_the_refusal_is_a_value_error(self):
+        assert issubclass(RegimeMismatch, ValueError)
+
+    def test_an_untaxed_line_under_a_domestic_regime_stays_allowed(self):
+        issued = issue(
+            party("DE", "DE987654321"),
+            [line(rate="0", category=VatCategory.EXEMPT)],
+            notes=EXEMPTION_NOTE,
+        )
+        assert issued.vat_regime is VatRegime.DOMESTIC
+        assert issued.total_vat == Money.zero("EUR")
+        assert issued.notes == EXEMPTION_NOTE
+
+    def test_an_untaxed_line_under_an_export_stays_allowed(self):
+        issued = issue(party("US"), [line(rate="0", category=VatCategory.ZERO_RATED)])
+        assert issued.vat_regime is VatRegime.EXPORT
+        assert issued.total_vat == Money.zero("EUR")
+
+    def test_a_private_buyer_abroad_is_charged_seller_vat(self):
+        issued = issue(party("FR"), [line()])
+        assert issued.vat_regime is VatRegime.PRIVATE_BUYER
+        assert issued.total_vat == Money("19.00", "EUR")
+
+
 class TestInvoiceIntegration:
     def test_invoice_exposes_its_regime(self):
-        invoice = Invoice(
-            number="2026-0001",
-            issue_date=date(2026, 3, 1),
-            seller=party("DE", "DE123456789"),
-            buyer=party("FR", "FR12345678901", validated=True),
-            lines=[
-                InvoiceLine(
-                    description="Consulting",
-                    quantity=Decimal(1),
-                    unit_price=Money("100.00", "EUR"),
-                    vat_rate=Decimal(0),
-                    vat_category=VatCategory.REVERSE_CHARGE,
-                )
-            ],
+        invoice = issue(
+            party("FR", "FR12345678901", validated=True),
+            [line(rate="0", category=VatCategory.REVERSE_CHARGE)],
         )
         assert invoice.vat_regime is VatRegime.REVERSE_CHARGE
         assert invoice.vat_decision.vat_category is VatCategory.REVERSE_CHARGE

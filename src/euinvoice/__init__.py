@@ -32,6 +32,7 @@ from .rendering import (
 )
 from .vat import (
     EU_COUNTRIES,
+    RegimeMismatch,
     VatCategory,
     VatDecision,
     VatRegime,
@@ -62,6 +63,7 @@ __all__ = [
     "PdfRenderer",
     "Period",
     "REVERSE_CHARGE_WORDINGS",
+    "RegimeMismatch",
     "RenderingError",
     "RequiredField",
     "SequentialNumbering",

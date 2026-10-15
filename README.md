@@ -86,6 +86,9 @@ until it arrives.
 - **Which fields the treatment requires.** Shifting the tax needs the buyer's
   identifier and a note in words; an exempt line needs a reason. `Invoice`
   runs that check on itself and refuses to exist with a gap in it.
+- **Whether the lines agree with the regime.** A regime that charges no seller
+  VAT and a line that charges it contradict each other, and `Invoice` refuses
+  the combination rather than printing a note against its own totals.
 - **When the statutory note is already implied.** A cross-border supply to a
   validated buyer and an export print their note by themselves; a domestic
   reverse charge has to write it out, and a payment term does not pass for it.
@@ -159,6 +162,29 @@ print(decision.explain())     # facts and legal basis, line by line
 A decision carries the facts it was made from and the article it rests on, so
 an invoice can still be defended in an audit years after it was issued.
 `invoice.vat_decision` runs the same rules on the invoice's own parties.
+
+### Lines that contradict the regime
+
+A reverse charge and an export charge no seller VAT, so a taxable line on such
+an invoice would print a note saying the seller charges nothing against totals
+that charge something. `Invoice` refuses to be built in that state and raises
+`RegimeMismatch`, which carries the decision and repeats `decision.explain()`
+in its message, so the reason is already in the traceback.
+
+```python
+from euinvoice import RegimeMismatch
+
+try:
+    Invoice(number="2026-0002", issue_date=date(2026, 3, 1), seller=seller,
+            buyer=french_buyer, lines=[standard_rate_line])
+except RegimeMismatch as error:
+    print(error.decision.regime)  # VatRegime.REVERSE_CHARGE
+    print(error.categories)       # (VatCategory.STANDARD,)
+```
+
+The other direction stays open: a domestic invoice may carry an exempt or
+zero-rated line, because a seller that charges VAT in general can still have a
+supply that bears none — it only has to state the reason.
 
 ## Required fields
 

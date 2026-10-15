@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Sequence
 
 from .parties import Party
 
 __all__ = [
     "EU_COUNTRIES",
+    "RegimeMismatch",
     "VatCategory",
     "VatDecision",
     "VatRegime",
@@ -107,6 +109,22 @@ class VatDecision:
         lines.extend(f"- {fact}" for fact in self.facts)
         lines.append(f"Legal basis: {self.legal_reference}")
         return "\n".join(lines)
+
+
+class RegimeMismatch(ValueError):
+    """Raised when lines charge VAT that their regime does not."""
+
+    def __init__(
+        self, decision: VatDecision, categories: Sequence[VatCategory]
+    ) -> None:
+        self.decision = decision
+        self.categories = tuple(categories)
+        listed = ", ".join(category.value for category in self.categories)
+        super().__init__(
+            f"the {decision.regime.value} regime charges no seller VAT, but "
+            f"the invoice carries taxable lines ({listed}):\n"
+            f"{decision.explain()}"
+        )
 
 
 def decide_vat_regime(seller: Party, buyer: Party) -> VatDecision:

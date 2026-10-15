@@ -10,7 +10,14 @@ from typing import Sequence
 from .compliance import MissingRequiredField, check_required_fields
 from .money import CurrencyMismatch, Money, to_decimal
 from .parties import Party
-from .vat import VatCategory, VatDecision, VatRegime, decide_vat_regime
+from .vat import (
+    EU_COUNTRIES,
+    RegimeMismatch,
+    VatCategory,
+    VatDecision,
+    VatRegime,
+    decide_vat_regime,
+)
 
 __all__ = ["Invoice", "InvoiceLine", "VatBreakdownRow", "VatCategory"]
 
@@ -94,6 +101,23 @@ class InvoiceLine:
         return self.net + self.vat
 
 
+def _check_lines_against_regime(
+    seller: Party, buyer: Party, lines: Sequence[InvoiceLine]
+) -> None:
+    # A seller outside the EU has no regime to check the lines against.
+    if seller.country not in EU_COUNTRIES:
+        return
+    decision = decide_vat_regime(seller, buyer)
+    if decision.charges_seller_vat:
+        return
+    taxable: list[VatCategory] = []
+    for line in lines:
+        if line.vat_category.is_taxable and line.vat_category not in taxable:
+            taxable.append(line.vat_category)
+    if taxable:
+        raise RegimeMismatch(decision, taxable)
+
+
 @dataclass(frozen=True, slots=True)
 class Invoice:
     """An invoice. Every total is computed from ``lines`` on access."""
@@ -151,6 +175,8 @@ class Invoice:
             category.is_taxable for category in categories
         ):
             raise ValueError("reverse-charge lines cannot be mixed with taxable lines")
+
+        _check_lines_against_regime(self.seller, self.buyer, lines)
 
         missing = check_required_fields(self.seller, self.buyer, lines, self.notes)
         if missing:
