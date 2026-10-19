@@ -11,6 +11,7 @@ from .parties import Party
 __all__ = [
     "EU_COUNTRIES",
     "RegimeMismatch",
+    "SupplyKind",
     "VatCategory",
     "VatDecision",
     "VatRegime",
@@ -69,12 +70,20 @@ class VatCategory(Enum):
         return self in (VatCategory.STANDARD, VatCategory.REDUCED)
 
 
+class SupplyKind(Enum):
+    """What is supplied: a border means something else to goods than to work."""
+
+    GOODS = "goods"
+    SERVICES = "services"
+
+
 class VatRegime(Enum):
     """The tax treatment of a supply between two parties."""
 
     DOMESTIC = "domestic"
     PRIVATE_BUYER = "private-buyer"
     REVERSE_CHARGE = "reverse-charge"
+    INTRA_COMMUNITY_SUPPLY = "intra-community-supply"
     EXPORT = "export"
 
     @property
@@ -95,6 +104,7 @@ class VatDecision:
     legal_reference: str
     facts: tuple[str, ...]
     invoice_note: str | None = None
+    supply_kind: SupplyKind = SupplyKind.SERVICES
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "facts", tuple(self.facts))
@@ -127,17 +137,24 @@ class RegimeMismatch(ValueError):
         )
 
 
-def decide_vat_regime(seller: Party, buyer: Party) -> VatDecision:
+def decide_vat_regime(
+    seller: Party,
+    buyer: Party,
+    supply_kind: SupplyKind = SupplyKind.SERVICES,
+) -> VatDecision:
     """Decide how a supply from ``seller`` to ``buyer`` is taxed.
 
-    The regime follows from the seller country, the buyer country and whether
-    the buyer's VAT identifier was validated. The returned decision carries the
-    facts it was made from, so the invoice can still be defended years later.
+    The regime follows from the seller country, the buyer country, whether the
+    buyer's VAT identifier was validated, and whether goods or services are
+    supplied. The returned decision carries the facts it was made from, so the
+    invoice can still be defended years later.
     """
     if not isinstance(seller, Party):
         raise TypeError("seller must be a Party")
     if not isinstance(buyer, Party):
         raise TypeError("buyer must be a Party")
+    if not isinstance(supply_kind, SupplyKind):
+        raise TypeError("supply_kind must be a SupplyKind")
 
     seller_country = seller.country
     buyer_country = buyer.country
@@ -148,6 +165,7 @@ def decide_vat_regime(seller: Party, buyer: Party) -> VatDecision:
         )
 
     facts = [
+        f"The invoice covers a supply of {supply_kind.value}.",
         f"Seller is established in {seller_country}.",
         f"Buyer is established in {buyer_country}.",
     ]
@@ -174,6 +192,7 @@ def decide_vat_regime(seller: Party, buyer: Party) -> VatDecision:
             legal_reference=legal_reference,
             facts=tuple(facts),
             invoice_note=invoice_note,
+            supply_kind=supply_kind,
         )
 
     if buyer_country == seller_country:
@@ -246,6 +265,22 @@ def decide_vat_regime(seller: Party, buyer: Party) -> VatDecision:
             f"The identifier was issued by {buyer.vat_country} while the "
             f"buyer's address is in {buyer_country}."
         )
+
+    if supply_kind is SupplyKind.GOODS:
+        facts.append(
+            "The goods leave for a taxable person in another member state, so "
+            "the dispatch is exempt here and the buyer is taxed on the "
+            "acquisition at home."
+        )
+        return decided(
+            VatRegime.INTRA_COMMUNITY_SUPPLY,
+            VatCategory.ZERO_RATED,
+            "Directive 2006/112/EC, Art. 138 "
+            "(intra-Community supplies of goods are exempt)",
+            "Intra-Community supply - exempt under Directive 2006/112/EC, "
+            "Art. 138; the recipient accounts for the acquisition tax.",
+        )
+
     facts.append(
         "Both parties are taxable persons in different member states, so the "
         "buyer accounts for the VAT."

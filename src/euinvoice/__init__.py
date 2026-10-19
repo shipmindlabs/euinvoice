@@ -33,6 +33,7 @@ from .rendering import (
 from .vat import (
     EU_COUNTRIES,
     RegimeMismatch,
+    SupplyKind,
     VatCategory,
     VatDecision,
     VatRegime,
@@ -67,6 +68,7 @@ __all__ = [
     "RenderingError",
     "RequiredField",
     "SequentialNumbering",
+    "SupplyKind",
     "VatBreakdownRow",
     "VatCategory",
     "VatDecision",

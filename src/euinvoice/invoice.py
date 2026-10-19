@@ -13,6 +13,7 @@ from .parties import Party
 from .vat import (
     EU_COUNTRIES,
     RegimeMismatch,
+    SupplyKind,
     VatCategory,
     VatDecision,
     VatRegime,
@@ -102,12 +103,23 @@ class InvoiceLine:
 
 
 def _check_lines_against_regime(
-    seller: Party, buyer: Party, lines: Sequence[InvoiceLine]
+    seller: Party,
+    buyer: Party,
+    lines: Sequence[InvoiceLine],
+    supply_kind: SupplyKind,
 ) -> None:
     # A seller outside the EU has no regime to check the lines against.
     if seller.country not in EU_COUNTRIES:
         return
-    decision = decide_vat_regime(seller, buyer)
+    decision = decide_vat_regime(seller, buyer, supply_kind)
+    if decision.regime is VatRegime.INTRA_COMMUNITY_SUPPLY and any(
+        line.vat_category is VatCategory.REVERSE_CHARGE for line in lines
+    ):
+        raise ValueError(
+            "an intra-Community supply of goods is exempt under Art. 138 "
+            "rather than shifted under Art. 196, so its lines are zero-rated "
+            "and not reverse-charge"
+        )
     if decision.charges_seller_vat:
         return
     taxable: list[VatCategory] = []
@@ -130,6 +142,7 @@ class Invoice:
     due_date: date | None = None
     supply_date: date | None = None
     notes: str | None = None
+    supply_kind: SupplyKind = SupplyKind.SERVICES
 
     def __post_init__(self) -> None:
         if not isinstance(self.number, str) or not self.number.strip():
@@ -142,6 +155,8 @@ class Invoice:
             raise TypeError("seller must be a Party")
         if not isinstance(self.buyer, Party):
             raise TypeError("buyer must be a Party")
+        if not isinstance(self.supply_kind, SupplyKind):
+            raise TypeError("supply_kind must be a SupplyKind")
 
         lines = tuple(self.lines)
         if not lines:
@@ -176,9 +191,11 @@ class Invoice:
         ):
             raise ValueError("reverse-charge lines cannot be mixed with taxable lines")
 
-        _check_lines_against_regime(self.seller, self.buyer, lines)
+        _check_lines_against_regime(self.seller, self.buyer, lines, self.supply_kind)
 
-        missing = check_required_fields(self.seller, self.buyer, lines, self.notes)
+        missing = check_required_fields(
+            self.seller, self.buyer, lines, self.notes, self.supply_kind
+        )
         if missing:
             raise MissingRequiredField(missing)
 
@@ -222,7 +239,7 @@ class Invoice:
     @property
     def vat_decision(self) -> VatDecision:
         """The regime the parties fall under, with the facts behind it."""
-        return decide_vat_regime(self.seller, self.buyer)
+        return decide_vat_regime(self.seller, self.buyer, self.supply_kind)
 
     @property
     def vat_regime(self) -> VatRegime:

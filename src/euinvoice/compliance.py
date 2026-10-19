@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Sequence
 
 from .parties import Party
-from .vat import EU_COUNTRIES, VatCategory, VatRegime, decide_vat_regime
+from .vat import EU_COUNTRIES, SupplyKind, VatCategory, VatRegime, decide_vat_regime
 
 if TYPE_CHECKING:
     from .invoice import InvoiceLine
@@ -107,6 +107,7 @@ def check_required_fields(
     buyer: Party,
     lines: Sequence[InvoiceLine],
     notes: str | None = None,
+    supply_kind: SupplyKind = SupplyKind.SERVICES,
 ) -> tuple[RequiredField, ...]:
     """Every required field this supply still lacks, in reading order.
 
@@ -118,6 +119,8 @@ def check_required_fields(
         raise TypeError("seller must be a Party")
     if not isinstance(buyer, Party):
         raise TypeError("buyer must be a Party")
+    if not isinstance(supply_kind, SupplyKind):
+        raise TypeError("supply_kind must be a SupplyKind")
 
     categories = {line.vat_category for line in lines}
     charges_vat = any(category.is_taxable for category in categories)
@@ -136,9 +139,11 @@ def check_required_fields(
         )
 
     if shifts_vat:
-        missing.extend(_reverse_charge_fields(seller, buyer, notes))
+        missing.extend(_reverse_charge_fields(seller, buyer, notes, supply_kind))
 
-    if leaves_vat_off and not _carries_exemption_reason(seller, buyer, notes):
+    if leaves_vat_off and not _carries_exemption_reason(
+        seller, buyer, notes, supply_kind
+    ):
         missing.append(
             RequiredField(
                 "notes",
@@ -153,7 +158,7 @@ def check_required_fields(
 
 
 def _reverse_charge_fields(
-    seller: Party, buyer: Party, notes: str | None
+    seller: Party, buyer: Party, notes: str | None, supply_kind: SupplyKind
 ) -> list[RequiredField]:
     missing: list[RequiredField] = []
     if buyer.vat_id is None:
@@ -185,7 +190,9 @@ def _reverse_charge_fields(
                 )
             )
 
-    if states_reverse_charge(notes) or _regime_states_reverse_charge(seller, buyer):
+    if states_reverse_charge(notes) or _regime_states_reverse_charge(
+        seller, buyer, supply_kind
+    ):
         return missing
 
     if notes is not None and notes.strip():
@@ -204,23 +211,28 @@ def _reverse_charge_fields(
     return missing
 
 
-def _regime_note(seller: Party, buyer: Party) -> str | None:
+def _regime_note(seller: Party, buyer: Party, supply_kind: SupplyKind) -> str | None:
     # A seller outside the EU has no regime to derive, and so no note either.
     if seller.country not in EU_COUNTRIES:
         return None
-    return decide_vat_regime(seller, buyer).invoice_note
+    return decide_vat_regime(seller, buyer, supply_kind).invoice_note
 
 
-def _regime_states_reverse_charge(seller: Party, buyer: Party) -> bool:
+def _regime_states_reverse_charge(
+    seller: Party, buyer: Party, supply_kind: SupplyKind
+) -> bool:
     if seller.country not in EU_COUNTRIES:
         return False
-    return decide_vat_regime(seller, buyer).regime is VatRegime.REVERSE_CHARGE
+    return (
+        decide_vat_regime(seller, buyer, supply_kind).regime
+        is VatRegime.REVERSE_CHARGE
+    )
 
 
 def _carries_exemption_reason(
-    seller: Party, buyer: Party, notes: str | None
+    seller: Party, buyer: Party, notes: str | None, supply_kind: SupplyKind
 ) -> bool:
     # An exemption reference is free text, so any note the seller wrote counts.
     if notes is not None and notes.strip():
         return True
-    return _regime_note(seller, buyer) is not None
+    return _regime_note(seller, buyer, supply_kind) is not None

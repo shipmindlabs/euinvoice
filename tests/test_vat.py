@@ -13,6 +13,7 @@ from euinvoice import (
     Money,
     Party,
     RegimeMismatch,
+    SupplyKind,
     VatCategory,
     VatRegime,
     decide_vat_regime,
@@ -143,6 +144,71 @@ class TestExport:
             decide_vat_regime(party("US", "US123456789"), party("DE"))
 
 
+class TestSupplyKind:
+    def test_a_supply_is_services_unless_said_otherwise(self):
+        decision = decide_vat_regime(
+            party("DE", "DE123456789"), party("FR", "FR12345678901", validated=True)
+        )
+        assert decision.supply_kind is SupplyKind.SERVICES
+        assert decision.regime is VatRegime.REVERSE_CHARGE
+
+    def test_goods_to_a_validated_buyer_abroad_are_an_intra_community_supply(self):
+        decision = decide_vat_regime(
+            party("DE", "DE123456789"),
+            party("FR", "FR12345678901", validated=True),
+            SupplyKind.GOODS,
+        )
+        assert decision.regime is VatRegime.INTRA_COMMUNITY_SUPPLY
+        assert decision.vat_category is VatCategory.ZERO_RATED
+        assert not decision.charges_seller_vat
+        assert "Art. 138" in decision.legal_reference
+
+    def test_the_goods_note_rests_on_art_138_and_not_on_art_196(self):
+        decision = decide_vat_regime(
+            party("DE", "DE123456789"),
+            party("FR", "FR12345678901", validated=True),
+            SupplyKind.GOODS,
+        )
+        assert "Art. 138" in decision.invoice_note
+        assert "Art. 196" not in decision.invoice_note
+        assert "reverse charge" not in decision.invoice_note.lower()
+
+    def test_goods_to_an_unvalidated_buyer_stay_with_the_seller(self):
+        decision = decide_vat_regime(
+            party("DE", "DE123456789"),
+            party("FR", "FR12345678901"),
+            SupplyKind.GOODS,
+        )
+        assert decision.regime is VatRegime.PRIVATE_BUYER
+
+    def test_goods_do_not_change_a_domestic_supply(self):
+        decision = decide_vat_regime(
+            party("DE", "DE123456789"),
+            party("DE", "DE987654321", validated=True),
+            SupplyKind.GOODS,
+        )
+        assert decision.regime is VatRegime.DOMESTIC
+
+    def test_goods_do_not_change_an_export(self):
+        decision = decide_vat_regime(
+            party("DE", "DE123456789"), party("US"), SupplyKind.GOODS
+        )
+        assert decision.regime is VatRegime.EXPORT
+
+    def test_the_decision_records_what_was_supplied(self):
+        decision = decide_vat_regime(
+            party("DE", "DE123456789"),
+            party("FR", "FR12345678901", validated=True),
+            SupplyKind.GOODS,
+        )
+        assert decision.supply_kind is SupplyKind.GOODS
+        assert any("supply of goods" in fact for fact in decision.facts)
+
+    def test_the_supply_kind_must_be_a_supply_kind(self):
+        with pytest.raises(TypeError):
+            decide_vat_regime(party("DE", "DE123456789"), party("DE"), "goods")
+
+
 class TestExplanation:
     def test_explanation_carries_facts_and_legal_basis(self):
         decision = decide_vat_regime(
@@ -179,6 +245,24 @@ class TestLinesAgainstTheRegime:
             issue(party("US"), [line(rate="7", category=VatCategory.REDUCED)])
         assert error.value.decision.regime is VatRegime.EXPORT
         assert error.value.categories == (VatCategory.REDUCED,)
+
+    def test_a_taxable_line_under_an_intra_community_supply_is_refused(self):
+        with pytest.raises(RegimeMismatch) as error:
+            issue(
+                party("FR", "FR12345678901", validated=True),
+                [line()],
+                supply_kind=SupplyKind.GOODS,
+            )
+        assert error.value.decision.regime is VatRegime.INTRA_COMMUNITY_SUPPLY
+
+    def test_a_shifted_line_under_an_intra_community_supply_is_refused(self):
+        with pytest.raises(ValueError) as error:
+            issue(
+                party("FR", "FR12345678901", validated=True),
+                [line(rate="0", category=VatCategory.REVERSE_CHARGE)],
+                supply_kind=SupplyKind.GOODS,
+            )
+        assert "Art. 138" in str(error.value)
 
     def test_every_taxable_category_is_named_once(self):
         with pytest.raises(RegimeMismatch) as error:
@@ -222,3 +306,22 @@ class TestInvoiceIntegration:
         assert invoice.vat_regime is VatRegime.REVERSE_CHARGE
         assert invoice.vat_decision.vat_category is VatCategory.REVERSE_CHARGE
         assert invoice.total_vat == Money.zero("EUR")
+
+    def test_an_invoice_supplies_services_by_default(self):
+        assert issue(party("DE", "DE987654321"), [line()]).supply_kind is (
+            SupplyKind.SERVICES
+        )
+
+    def test_goods_reach_the_decision_through_the_invoice(self):
+        invoice = issue(
+            party("FR", "FR12345678901", validated=True),
+            [line(rate="0", category=VatCategory.ZERO_RATED)],
+            supply_kind=SupplyKind.GOODS,
+        )
+        assert invoice.vat_regime is VatRegime.INTRA_COMMUNITY_SUPPLY
+        assert not invoice.is_reverse_charge
+        assert invoice.total_vat == Money.zero("EUR")
+
+    def test_the_invoice_refuses_an_unknown_supply_kind(self):
+        with pytest.raises(TypeError):
+            issue(party("DE", "DE987654321"), [line()], supply_kind="goods")

@@ -1,4 +1,4 @@
-"""Golden invoices: one per VAT regime, with the numbers they are issued under."""
+"""Golden invoices: one per VAT regime and supply kind, with their numbers."""
 
 from datetime import date
 from decimal import Decimal
@@ -14,8 +14,10 @@ from euinvoice import (
     NumberSeries,
     Party,
     SequentialNumbering,
+    SupplyKind,
     VatCategory,
     VatRegime,
+    decide_vat_regime,
     render_html,
 )
 
@@ -23,6 +25,10 @@ DOMESTIC_SHIFT_NOTE = "Steuerschuldnerschaft des Leistungsempfängers."
 REVERSE_CHARGE_NOTE = (
     "Reverse charge - VAT to be accounted for by the recipient "
     "(Directive 2006/112/EC, Art. 196)."
+)
+INTRA_COMMUNITY_NOTE = (
+    "Intra-Community supply - exempt under Directive 2006/112/EC, Art. 138; "
+    "the recipient accounts for the acquisition tax."
 )
 EXPORT_NOTE = (
     "Export outside the EU - no EU VAT charged (Directive 2006/112/EC, Art. 146)."
@@ -127,6 +133,16 @@ class TestDomestic:
         assert "119.00 EUR" in html
         assert "DE123456789" in html
 
+    def test_goods_sold_at_home_are_taxed_like_services(self):
+        issued = invoice(
+            to=buyer("DE", "DE987654321"),
+            lines=[line("100.00", description="Rotor blade")],
+            supply_kind=SupplyKind.GOODS,
+        )
+        assert issued.vat_regime is VatRegime.DOMESTIC
+        assert issued.total_vat == Money("19.00", "EUR")
+        assert InvoiceDocument.from_invoice(issued).vat_note is None
+
 
 class TestPrivateBuyer:
     def test_a_buyer_without_an_identifier_is_charged_seller_vat(self):
@@ -142,6 +158,15 @@ class TestPrivateBuyer:
         assert issued.vat_regime is VatRegime.PRIVATE_BUYER
         assert issued.total_vat == Money("19.00", "EUR")
         assert "Art. 18" in issued.vat_decision.legal_reference
+
+    def test_goods_to_a_private_buyer_abroad_stay_taxed_at_home(self):
+        issued = invoice(
+            to=buyer("FR"),
+            lines=[line("100.00", description="Rotor blade")],
+            supply_kind=SupplyKind.GOODS,
+        )
+        assert issued.vat_regime is VatRegime.PRIVATE_BUYER
+        assert issued.total_vat == Money("19.00", "EUR")
 
 
 class TestReverseCharge:
@@ -192,6 +217,56 @@ class TestReverseCharge:
         assert DOMESTIC_SHIFT_NOTE in render_html(document)
 
 
+class TestIntraCommunitySupply:
+    def test_goods_to_a_validated_buyer_abroad_are_exempt(self):
+        issued = invoice(
+            to=buyer("FR", "FR12345678901", validated=True),
+            lines=[
+                line("250.00", quantity="4", rate="0",
+                     category=VatCategory.ZERO_RATED, description="Rotor blades")
+            ],
+            supply_kind=SupplyKind.GOODS,
+        )
+        assert issued.vat_regime is VatRegime.INTRA_COMMUNITY_SUPPLY
+        assert not issued.is_reverse_charge
+        assert issued.vat_decision.vat_category is VatCategory.ZERO_RATED
+        assert issued.total_net == Money("1000.00", "EUR")
+        assert issued.total_vat == Money.zero("EUR")
+        assert issued.total_gross == issued.total_net
+        assert breakdown(issued) == [
+            (
+                VatCategory.ZERO_RATED,
+                Decimal(0),
+                Money("1000.00", "EUR"),
+                Money.zero("EUR"),
+            )
+        ]
+
+    def test_the_page_prints_the_art_138_note(self):
+        issued = invoice(
+            to=buyer("FR", "FR12345678901", validated=True),
+            lines=[
+                line("250.00", rate="0", category=VatCategory.ZERO_RATED,
+                     description="Rotor blades")
+            ],
+            supply_kind=SupplyKind.GOODS,
+        )
+        document = InvoiceDocument.from_invoice(issued)
+        assert document.vat_note == INTRA_COMMUNITY_NOTE
+        assert document.lines[0].vat_label == "Zero-rated"
+        html = render_html(document)
+        assert "Art. 138" in html
+        assert "Art. 196" not in html
+
+    def test_the_same_parties_buying_services_stay_a_reverse_charge(self):
+        issued = invoice(
+            to=buyer("FR", "FR12345678901", validated=True),
+            lines=[line("250.00", rate="0", category=VatCategory.REVERSE_CHARGE)],
+        )
+        assert issued.vat_regime is VatRegime.REVERSE_CHARGE
+        assert InvoiceDocument.from_invoice(issued).vat_note == REVERSE_CHARGE_NOTE
+
+
 class TestExport:
     def test_no_eu_vat_leaves_the_union(self):
         issued = invoice(
@@ -205,6 +280,49 @@ class TestExport:
         document = InvoiceDocument.from_invoice(issued)
         assert document.vat_note == EXPORT_NOTE
         assert document.lines[0].vat_label == "Zero-rated"
+
+    def test_goods_leaving_the_union_are_still_an_export(self):
+        issued = invoice(
+            to=buyer("US"),
+            lines=[
+                line("1000.00", rate="0", category=VatCategory.ZERO_RATED,
+                     description="Rotor blades")
+            ],
+            supply_kind=SupplyKind.GOODS,
+        )
+        assert issued.vat_regime is VatRegime.EXPORT
+        assert InvoiceDocument.from_invoice(issued).vat_note == EXPORT_NOTE
+
+
+class TestRegimePerSupplyKind:
+    def test_each_pair_of_parties_lands_where_its_supply_kind_puts_it(self):
+        cases = [
+            (buyer("DE", "DE987654321"), SupplyKind.SERVICES, VatRegime.DOMESTIC),
+            (buyer("DE", "DE987654321"), SupplyKind.GOODS, VatRegime.DOMESTIC),
+            (buyer("FR"), SupplyKind.SERVICES, VatRegime.PRIVATE_BUYER),
+            (buyer("FR"), SupplyKind.GOODS, VatRegime.PRIVATE_BUYER),
+            (
+                buyer("FR", "FR12345678901"),
+                SupplyKind.GOODS,
+                VatRegime.PRIVATE_BUYER,
+            ),
+            (
+                buyer("FR", "FR12345678901", validated=True),
+                SupplyKind.SERVICES,
+                VatRegime.REVERSE_CHARGE,
+            ),
+            (
+                buyer("FR", "FR12345678901", validated=True),
+                SupplyKind.GOODS,
+                VatRegime.INTRA_COMMUNITY_SUPPLY,
+            ),
+            (buyer("US"), SupplyKind.SERVICES, VatRegime.EXPORT),
+            (buyer("US"), SupplyKind.GOODS, VatRegime.EXPORT),
+        ]
+        for to, kind, regime in cases:
+            decision = decide_vat_regime(seller(), to, kind)
+            assert decision.regime is regime
+            assert decision.supply_kind is kind
 
 
 class TestNumberedRun:
@@ -239,18 +357,25 @@ class TestNumberedRun:
     def test_the_regime_does_not_touch_the_number(self):
         numbers = SequentialNumbering(NumberSeries("INV"), InMemoryCounterStore())
         drafts = [
-            (buyer("DE", "DE987654321"), [line("100.00")]),
+            (buyer("DE", "DE987654321"), [line("100.00")], SupplyKind.SERVICES),
             (
                 buyer("US"),
                 [line("100.00", rate="0", category=VatCategory.ZERO_RATED)],
+                SupplyKind.SERVICES,
             ),
             (
                 buyer("FR", "FR12345678901", validated=True),
                 [line("100.00", rate="0", category=VatCategory.REVERSE_CHARGE)],
+                SupplyKind.SERVICES,
+            ),
+            (
+                buyer("FR", "FR12345678901", validated=True),
+                [line("100.00", rate="0", category=VatCategory.ZERO_RATED)],
+                SupplyKind.GOODS,
             ),
         ]
         issued = []
-        for to, lines in drafts:
+        for to, lines, kind in drafts:
             number = numbers.next_number(date(2026, 3, 1))
             issued.append(
                 invoice(
@@ -258,17 +383,20 @@ class TestNumberedRun:
                     lines=lines,
                     number=number.number,
                     issue_date=number.issue_date,
+                    supply_kind=kind,
                 )
             )
         assert [one.number for one in issued] == [
             "INV-2026-0001",
             "INV-2026-0002",
             "INV-2026-0003",
+            "INV-2026-0004",
         ]
         assert [one.vat_regime for one in issued] == [
             VatRegime.DOMESTIC,
             VatRegime.EXPORT,
             VatRegime.REVERSE_CHARGE,
+            VatRegime.INTRA_COMMUNITY_SUPPLY,
         ]
         for one in issued:
             assert one.number in page(one)
