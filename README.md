@@ -62,6 +62,11 @@ A line with `VatCategory.REVERSE_CHARGE` shifts the tax to the buyer: such
 lines carry a zero rate, require the buyer's VAT identifier, and cannot be
 mixed with taxable lines on the same invoice.
 
+An invoice also says what it covers. `Invoice(supply_kind=SupplyKind.GOODS)`
+marks a supply of goods, and goods sent to a validated buyer in another member
+state are an exempt intra-Community supply rather than a reverse charge;
+`SupplyKind.SERVICES` is the default and keeps today's treatment.
+
 ## Issuing invoices in the EU without surprises
 
 An invoice goes wrong in two directions: it can state something the rules do
@@ -72,10 +77,10 @@ until it arrives.
 
 ### What it decides for you
 
-- **The regime.** Seller country, buyer country and whether the buyer's
-  identifier was validated give one of `DOMESTIC`, `PRIVATE_BUYER`,
-  `REVERSE_CHARGE` or `EXPORT`, together with the facts behind it and the
-  article it rests on.
+- **The regime.** Seller country, buyer country, whether the buyer's
+  identifier was validated and whether goods or services are supplied give one
+  of `DOMESTIC`, `PRIVATE_BUYER`, `REVERSE_CHARGE`, `INTRA_COMMUNITY_SUPPLY`
+  or `EXPORT`, together with the facts behind it and the article it rests on.
 - **Every total.** Line net, line VAT, the breakdown per rate bucket and the
   three invoice totals are properties, never fields. There is no way to write
   a total that disagrees with its lines, because there is nothing to write to.
@@ -107,6 +112,10 @@ until it arrives.
   made against VIES or whatever your process is; nothing in this package
   touches the network. An identifier nobody verified leaves the tax with the
   seller, which is the safe direction to be wrong in.
+- **Whether the goods actually left.** The exemption for an intra-Community
+  supply stands on evidence that the goods were dispatched to the other
+  member state. The package takes the supply kind you pass and records the
+  exemption it leads to; keeping the transport documents is yours.
 - **Where the place of supply moved to.** Distance selling and the One Stop
   Shop can put the supply in the buyer's country. That follows from how you
   are registered and what you sell, so the decision notes it as a fact and
@@ -138,30 +147,70 @@ nothing.
 
 ## VAT regimes
 
-The regime follows from the seller country, the buyer country and whether the
-buyer's VAT identifier has been validated (`Party(vat_id_validated=True)`):
+The regime follows from the seller country, the buyer country, whether the
+buyer's VAT identifier has been validated (`Party(vat_id_validated=True)`) and
+what is being supplied (`SupplyKind`):
 
-| Seller | Buyer | Buyer VAT id | Regime |
-| --- | --- | --- | --- |
-| DE | DE | anything | `DOMESTIC` |
-| DE | FR | validated | `REVERSE_CHARGE` |
-| DE | FR | missing or unvalidated | `PRIVATE_BUYER` |
-| DE | US | anything | `EXPORT` |
+| Seller | Buyer | Buyer VAT id | Supply | Regime |
+| --- | --- | --- | --- | --- |
+| DE | DE | anything | either | `DOMESTIC` |
+| DE | FR | validated | services | `REVERSE_CHARGE` |
+| DE | FR | validated | goods | `INTRA_COMMUNITY_SUPPLY` |
+| DE | FR | missing or unvalidated | either | `PRIVATE_BUYER` |
+| DE | US | anything | either | `EXPORT` |
 
 ```python
-from euinvoice import decide_vat_regime
+from euinvoice import SupplyKind, decide_vat_regime
 
 decision = decide_vat_regime(seller, buyer)
 
 print(decision.regime)        # VatRegime.DOMESTIC
 print(decision.vat_category)  # VatCategory.STANDARD
+print(decision.supply_kind)   # SupplyKind.SERVICES
 print(decision.invoice_note)  # text for the invoice footer, or None
 print(decision.explain())     # facts and legal basis, line by line
 ```
 
 A decision carries the facts it was made from and the article it rests on, so
 an invoice can still be defended in an audit years after it was issued.
-`invoice.vat_decision` runs the same rules on the invoice's own parties.
+`invoice.vat_decision` runs the same rules on the invoice's own parties and
+its own supply kind.
+
+### Goods cross a border differently from services
+
+A border means something else to goods than to work, so `decide_vat_regime`
+and `Invoice` take a supply kind. It defaults to `SupplyKind.SERVICES`, and
+nothing changes for an invoice that does not mention it.
+
+Services to a validated buyer in another member state remain a reverse charge
+under Art. 44 and Art. 196: the lines are `REVERSE_CHARGE` and the note says
+the recipient accounts for the VAT. Goods going to that same buyer are an
+exempt intra-Community supply under Art. 138 instead: the lines are
+`ZERO_RATED`, the dispatch bears no VAT here, and the buyer is taxed on the
+acquisition at home. Anywhere else the supply kind decides nothing — a
+domestic supply stays domestic, a buyer without a validated identifier is
+still charged seller VAT, and anything leaving the Union is an export.
+
+```python
+from euinvoice import SupplyKind
+
+shipped = Invoice(
+    number="2026-0003",
+    issue_date=date(2026, 3, 1),
+    seller=seller,
+    buyer=french_buyer,
+    lines=[rotor_blades],
+    supply_kind=SupplyKind.GOODS,
+)
+
+print(shipped.vat_regime)                 # VatRegime.INTRA_COMMUNITY_SUPPLY
+print(shipped.vat_decision.vat_category)  # VatCategory.ZERO_RATED
+print(shipped.total_vat)                  # 0.00 EUR
+```
+
+The two treatments rest on different articles and their lines are therefore
+not interchangeable: a reverse-charge line on an intra-Community supply of
+goods is refused rather than printed under the Art. 138 note.
 
 ### Lines that contradict the regime
 
@@ -206,7 +255,9 @@ for field in check_required_fields(seller, buyer, lines, notes):
 
 Run it on a draft and it lists everything that is still missing at once, each
 with the rule that asks for it; `MissingRequiredField` carries the same list in
-`error.missing`.
+`error.missing`. The supply kind belongs to the draft as well, so pass it on
+(`check_required_fields(seller, buyer, lines, notes, SupplyKind.GOODS)`) to see
+the fields the treatment of goods asks for.
 
 The note is only required where the parties do not already imply it: a
 cross-border supply to a validated buyer prints the statutory note by itself,
