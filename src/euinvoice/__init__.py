@@ -7,6 +7,7 @@ from .compliance import (
     check_required_fields,
     states_reverse_charge,
 )
+from .documents import DocumentKind
 from .invoice import Invoice, InvoiceLine, VatBreakdownRow
 from .money import CurrencyMismatch, Money
 from .numbering import (
@@ -48,6 +49,7 @@ __all__ = [
     "CounterStore",
     "CurrencyMismatch",
     "DEFAULT_STYLESHEET",
+    "DocumentKind",
     "DocumentLine",
     "DocumentParty",
     "EU_COUNTRIES",

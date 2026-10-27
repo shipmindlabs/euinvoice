@@ -6,6 +6,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Sequence
 
+from .documents import DocumentKind
 from .parties import Party
 from .vat import EU_COUNTRIES, SupplyKind, VatCategory, VatRegime, decide_vat_regime
 
@@ -25,6 +26,7 @@ _CUSTOMER_ID = "Directive 2006/112/EC, Art. 226(4)"
 _EXEMPTION_REASON = "Directive 2006/112/EC, Art. 226(11)"
 _REVERSE_CHARGE_NOTE = "Directive 2006/112/EC, Art. 226(11a)"
 _CUSTOMER_STATUS = "Implementing Regulation (EU) 282/2011, Art. 18"
+_CORRECTED_INVOICE = "Directive 2006/112/EC, Art. 219"
 
 _UNTAXED_CATEGORIES = frozenset({VatCategory.EXEMPT, VatCategory.ZERO_RATED})
 
@@ -108,6 +110,8 @@ def check_required_fields(
     lines: Sequence[InvoiceLine],
     notes: str | None = None,
     supply_kind: SupplyKind = SupplyKind.SERVICES,
+    kind: DocumentKind = DocumentKind.INVOICE,
+    corrects: str | None = None,
 ) -> tuple[RequiredField, ...]:
     """Every required field this supply still lacks, in reading order.
 
@@ -121,13 +125,37 @@ def check_required_fields(
         raise TypeError("buyer must be a Party")
     if not isinstance(supply_kind, SupplyKind):
         raise TypeError("supply_kind must be a SupplyKind")
+    if not isinstance(kind, DocumentKind):
+        raise TypeError("kind must be a DocumentKind")
+    if corrects is not None and not isinstance(corrects, str):
+        raise TypeError("corrects must be a string")
 
     categories = {line.vat_category for line in lines}
     charges_vat = any(category.is_taxable for category in categories)
     shifts_vat = VatCategory.REVERSE_CHARGE in categories
     leaves_vat_off = bool(categories & _UNTAXED_CATEGORIES)
+    corrected = corrects.strip() if corrects is not None else ""
 
     missing: list[RequiredField] = []
+    if kind is DocumentKind.CREDIT_NOTE and not corrected:
+        missing.append(
+            RequiredField(
+                "corrects",
+                "a credit note must name the number of the invoice it "
+                "corrects, specifically and unambiguously",
+                _CORRECTED_INVOICE,
+            )
+        )
+    elif kind is DocumentKind.INVOICE and corrected:
+        missing.append(
+            RequiredField(
+                "corrects",
+                "only a credit note names the document it corrects; an "
+                "invoice must leave that reference empty",
+                _CORRECTED_INVOICE,
+            )
+        )
+
     if seller.vat_id is None and (charges_vat or shifts_vat):
         missing.append(
             RequiredField(

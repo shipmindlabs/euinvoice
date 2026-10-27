@@ -8,6 +8,7 @@ from decimal import Decimal
 from html import escape
 from typing import Protocol, runtime_checkable
 
+from .documents import DocumentKind
 from .invoice import Invoice, InvoiceLine, VatBreakdownRow
 from .money import Money
 from .parties import Party
@@ -35,6 +36,11 @@ _CATEGORY_LABELS = {
     VatCategory.ZERO_RATED: "Zero-rated",
     VatCategory.EXEMPT: "Exempt",
     VatCategory.REVERSE_CHARGE: "Reverse charge",
+}
+
+_KIND_LABELS = {
+    DocumentKind.INVOICE: "Invoice",
+    DocumentKind.CREDIT_NOTE: "Credit note",
 }
 
 
@@ -133,6 +139,8 @@ class InvoiceDocument:
     supply_date: date | None = None
     vat_note: str | None = None
     notes: str | None = None
+    kind: DocumentKind = DocumentKind.INVOICE
+    corrects: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "lines", tuple(self.lines))
@@ -144,7 +152,7 @@ class InvoiceDocument:
 
     @property
     def title(self) -> str:
-        return f"Invoice {self.number}"
+        return f"{_KIND_LABELS[self.kind]} {self.number}"
 
     @classmethod
     def from_invoice(cls, invoice: Invoice) -> InvoiceDocument:
@@ -165,6 +173,8 @@ class InvoiceDocument:
             supply_date=invoice.supply_date,
             vat_note=_vat_note(invoice),
             notes=invoice.notes,
+            kind=invoice.kind,
+            corrects=invoice.corrects,
         )
 
 
@@ -281,6 +291,8 @@ def render_html(document: InvoiceDocument, *, stylesheet: str | None = None) -> 
         meta.append(
             f"<span>Due date: {escape(_format_date(document.due_date))}</span>"
         )
+    if document.corrects:
+        meta.append(f"<span>Corrects invoice: {escape(document.corrects)}</span>")
 
     parts = [
         "<!DOCTYPE html>",

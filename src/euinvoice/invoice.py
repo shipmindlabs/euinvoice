@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Sequence
 
 from .compliance import MissingRequiredField, check_required_fields
+from .documents import DocumentKind
 from .money import CurrencyMismatch, Money, to_decimal
 from .parties import Party
 from .vat import (
@@ -143,6 +144,8 @@ class Invoice:
     supply_date: date | None = None
     notes: str | None = None
     supply_kind: SupplyKind = SupplyKind.SERVICES
+    kind: DocumentKind = DocumentKind.INVOICE
+    corrects: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.number, str) or not self.number.strip():
@@ -157,6 +160,13 @@ class Invoice:
             raise TypeError("buyer must be a Party")
         if not isinstance(self.supply_kind, SupplyKind):
             raise TypeError("supply_kind must be a SupplyKind")
+        if not isinstance(self.kind, DocumentKind):
+            raise TypeError("kind must be a DocumentKind")
+
+        if self.corrects is not None:
+            if not isinstance(self.corrects, str):
+                raise TypeError("corrects must be a string")
+            object.__setattr__(self, "corrects", self.corrects.strip() or None)
 
         lines = tuple(self.lines)
         if not lines:
@@ -194,7 +204,13 @@ class Invoice:
         _check_lines_against_regime(self.seller, self.buyer, lines, self.supply_kind)
 
         missing = check_required_fields(
-            self.seller, self.buyer, lines, self.notes, self.supply_kind
+            self.seller,
+            self.buyer,
+            lines,
+            self.notes,
+            self.supply_kind,
+            self.kind,
+            self.corrects,
         )
         if missing:
             raise MissingRequiredField(missing)
@@ -202,6 +218,10 @@ class Invoice:
     @property
     def currency(self) -> str:
         return self.lines[0].currency
+
+    @property
+    def is_credit_note(self) -> bool:
+        return self.kind is DocumentKind.CREDIT_NOTE
 
     @property
     def total_net(self) -> Money:
