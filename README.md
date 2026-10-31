@@ -89,8 +89,9 @@ until it arrives.
   lines of 0.10 EUR at 19% carry 0.20 EUR of VAT, not the 0.19 EUR that the
   same rate on the total would give, and the breakdown adds up either way.
 - **Which fields the treatment requires.** Shifting the tax needs the buyer's
-  identifier and a note in words; an exempt line needs a reason. `Invoice`
-  runs that check on itself and refuses to exist with a gap in it.
+  identifier and a note in words; an exempt line needs a reason; a credit note
+  needs the number it corrects. `Invoice` runs that check on itself and
+  refuses to exist with a gap in it.
 - **Whether the lines agree with the regime.** A regime that charges no seller
   VAT and a line that charges it contradict each other, and `Invoice` refuses
   the combination rather than printing a note against its own totals.
@@ -123,6 +124,9 @@ until it arrives.
 - **Why a line is exempt.** It insists on a reason and prints what you wrote;
   the provision depends on the supply, and choosing one for you would be
   guessing at the part an auditor actually reads.
+- **Which invoice a correction belongs to.** A credit note has to name the
+  number it corrects, and that number comes from your records; the package
+  checks that one is there, not that it ever existed.
 - **Currencies.** `Money` is bound to one currency and two currencies never
   combine. There are no exchange rates and no conversion.
 - **How the page is printed.** The HTML is plain and the styling is one sheet
@@ -272,6 +276,49 @@ from euinvoice import states_reverse_charge
 states_reverse_charge("Steuerschuldnerschaft des Leistungsempfängers")  # True
 states_reverse_charge("Payment within 14 days")                         # False
 ```
+
+## Credit notes
+
+An invoice that was wrong is not rewritten; it is corrected by a second
+document that says which invoice it corrects. `DocumentKind` names the two
+kinds, and a credit note carries the corrected number in `corrects`:
+
+```python
+from euinvoice import DocumentKind, InvoiceDocument
+
+credit_note = Invoice(
+    number="CN-2026-0007",
+    issue_date=date(2026, 4, 1),
+    seller=seller,
+    buyer=buyer,
+    lines=[consulting],
+    kind=DocumentKind.CREDIT_NOTE,
+    corrects="2026-0001",
+)
+
+print(credit_note.is_credit_note)                       # True
+print(credit_note.total_gross)                          # 1071.00 EUR
+print(InvoiceDocument.from_invoice(credit_note).title)  # Credit note CN-2026-0007
+```
+
+Art. 219 treats the correction as part of the invoice it amends, which it can
+only be if it refers to that invoice specifically and unambiguously. The
+reference is therefore a required field on a credit note and a forbidden one on
+an invoice, checked the same way as the rest: a credit note without it and an
+invoice with it both raise `MissingRequiredField` naming `corrects`. Pass
+`kind` and `corrects` to `check_required_fields` to see that on a draft.
+
+Amounts stay positive. What a document does follows from its kind, not from a
+minus sign in front of its totals, and a credit note whose lines were negated
+would print a VAT breakdown that no accounting system reads the same way. The
+regime rules apply unchanged as well: a domestic credit note charges the
+seller's VAT, a cross-border one shifts or exempts exactly as the invoice it
+corrects did, and the same required fields come with that treatment.
+
+The page prints `Credit note` with the document number and the corrected
+number beside the dates; an invoice prints neither. Give credit notes their own
+number series (`NumberSeries("CN")`) so that one counter is not shared between
+two kinds of document.
 
 ## Sequential numbering
 
